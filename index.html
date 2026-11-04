@@ -483,7 +483,7 @@ function ensureLogoLoaded(){
 
 const SHAPES = [
   {key:'mobius', name:'莫比烏斯', sub:'Möbius', desc:'圈身帶有一圈自然流動的扭轉線條,靈感源自莫比烏斯環,象徵無盡與永恆的連結。'},
-  {key:'mobiusDeco', name:'莫比烏斯花邊', sub:'Möbius Textured', desc:'莫比烏斯的扭轉線條,再疊上花邊的不規則波浪起伏,呈現更具手工感的雙重造型。'}
+  {key:'mobiusDeco', name:'莫比烏斯花邊', sub:'Möbius Textured', desc:'圈身帶有一道斜向扭轉折線,邊緣帶有手工敲打的不規則起伏。'}
 ];
 const WIDTHS = [2, 2.5, 3, 3.5, 4];
 /* 莫比烏斯系列需要足夠寬度才能呈現自然的扭轉弧度,僅開放 3mm、4mm */
@@ -1000,16 +1000,84 @@ function animate(){
 }
 
 /* ---- 依形狀產生真實剖面(x=厚度/徑向, y=寬度/沿手指軸向), 皆為 1:1 mm ---- */
+/* 莫比烏斯花邊(依實拍照片):扭轉折線緊鄰主石一側,折線前為亮面、折線後一大段為碎星噴砂面;
+   戒圈上下緣為細碎不規則的手工敲打邊,圈身只有輕微起伏,不做大波浪 */
+const MOBIUS_DECO_KINK = Math.PI;  /* 扭轉折線中心角度:與莫比烏斯同一個位置(預設視角下的正面正中央) */
+const MOBIUS_DECO_SAND_END = 250;          /* 碎星噴砂面從折線一路延伸到此角度(度) */
+/* 不扭轉區:主石處與扭轉折線處不加敲打的細微扭轉,讓主石正放、折線乾淨 */
+const DECO_FLAT_ZONES = [{c:0, flat:0.12, ramp:0.2}, {c:MOBIUS_DECO_KINK, flat:0.6, ramp:0.4}];
+function decoFlatBlend(theta){
+  let f = 1;
+  DECO_FLAT_ZONES.forEach(z=>{
+    const d = Math.abs(((theta - z.c) % (Math.PI*2) + Math.PI*3) % (Math.PI*2) - Math.PI);
+    const t = Math.min(1, Math.max(0, (d - z.flat)/z.ramp));
+    f *= t*t*(3 - 2*t);
+  });
+  return f;
+}
+/* 敲打面造成的細微扭轉(呈現手工折面反光) */
+function decoTwist(theta){
+  return decoFlatBlend(theta)*(0.07*Math.sin(7*theta + 0.5) + 0.05*Math.sin(11*theta + 1.9));
+}
 function decoWaveOffset(theta){
-  /* 多組不同頻率與相位疊加,避免規律的正弦波感,呈現更自然的手工敲打起伏 */
-  return 0.22*Math.sin(theta*5 + 0.4)
-       + 0.13*Math.sin(theta*8 + 2.1)
-       + 0.09*Math.sin(theta*13 + 1.2);
+  return 0.035*Math.sin(9*theta + 1.1) + 0.02*Math.sin(16*theta + 0.4);
 }
 function decoWaveWidthOffset(theta){
-  return 0.16*Math.cos(theta*5 + 1.1)
-       + 0.10*Math.cos(theta*8 + 0.3)
-       + 0.06*Math.cos(theta*13 + 2.4);
+  return 0.06*Math.sin(5*theta + 0.4) + 0.04*Math.sin(8*theta + 2.0);
+}
+/* 上下緣各自的不規則敲打起伏:以週期 4π 的同一條函式表示,上緣取 E(θ)、下緣取 E(θ+2π),
+   莫比烏斯扭轉半圈後上下緣互換時剛好接續,收尾處不會裂開 */
+function decoEdgeNoise(phi){
+  /* 扭轉折線附近不加敲打起伏,讓折線乾淨 */
+  const d = Math.abs(((phi - MOBIUS_DECO_KINK) % (Math.PI*2) + Math.PI*3) % (Math.PI*2) - Math.PI);
+  const t = Math.min(1, Math.max(0, (d - 0.55)/0.45)), w = t*t*(3 - 2*t);
+  return w*( 0.07*Math.sin(4.5*phi + 0.3) + 0.05*Math.sin(7.5*phi + 1.7)
+       + 0.035*Math.sin(12.5*phi + 0.9) + 0.025*Math.sin(18.5*phi + 2.2));
+}
+/* 莫比烏斯花邊的扭轉角:扭結移到 MOBIUS_DECO_KINK,並展開成連續函式(繞一圈剛好增加 π) */
+function mobiusDecoHalf(theta){
+  const x = theta - (MOBIUS_DECO_KINK - Math.PI);
+  const k = Math.floor(x/(Math.PI*2));
+  /* 扭轉放緩,斜向折線拉長、更柔和;整體取負號,讓斜向折線扭向與莫比烏斯相反的另一邊 */
+  return -(mobiusTwistHalfAngle(x - k*Math.PI*2, 20) + k*Math.PI);
+}
+/* 碎星噴砂面貼圖:細密的白色亮點 */
+function buildSandMaps(){
+  const N = 256;
+  const mk = (bg)=>{ const c=document.createElement('canvas'); c.width=N; c.height=N; const x=c.getContext('2d'); x.fillStyle=bg; x.fillRect(0,0,N,N); return [c,x]; };
+  const [cc, cx] = mk('#a3a6a8'), [ec, ex] = mk('#000000');
+  for(let i=0;i<5200;i++){
+    const px=Math.random()*N, py=Math.random()*N, r=Math.random()*1.4+0.8, b=Math.random();
+    cx.fillStyle = b>0.6 ? '#ffffff' : (b>0.3 ? '#d4d6d7' : '#6f7274');
+    cx.beginPath(); cx.arc(px,py,r,0,Math.PI*2); cx.fill();
+    if(b>0.72){ ex.fillStyle = '#ffffff'; ex.beginPath(); ex.arc(px,py,r,0,Math.PI*2); ex.fill(); }
+  }
+  const toTex = c=>{ const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(0.65,0.65); return t; }; /* 顆粒約 0.07mm,畫面上才看得出噴砂顆粒 */
+  return {map:toTex(cc), emissiveMap:toTex(ec)};
+}
+function buildSandMaterial(){
+  const m = buildSandMaps();
+  return new THREE.MeshStandardMaterial({
+    color:0xc4c6c8, metalness:0.8, roughness:0.55, side:THREE.DoubleSide,
+    map:m.map, emissive:new THREE.Color(0xffffff), emissiveMap:m.emissiveMap, emissiveIntensity:0.55
+  });
+}
+/* 花邊用扁平圓角矩形剖面(對原點點對稱,可用於莫比烏斯收尾) */
+function getDecoProfile(halfWidth, halfThick){
+  const rc = Math.min(halfThick*0.5, halfWidth*0.3), K = 5, pts = [];
+  [[halfThick-rc, halfWidth-rc, 0],[-halfThick+rc, halfWidth-rc, Math.PI/2],
+   [-halfThick+rc, -halfWidth+rc, Math.PI],[halfThick-rc, -halfWidth+rc, Math.PI*1.5]].forEach(([cx,cy,a0])=>{
+    for(let k=0;k<=K;k++){ const a=a0+(k/K)*Math.PI/2; pts.push({x:cx+rc*Math.cos(a), y:cy+rc*Math.sin(a)}); }
+  });
+  return pts;
+}
+/* 莫比烏斯花邊表面上「沿手指軸向位置 y」的點:side=1 朝外、-1 朝內,回傳半徑與實際 z
+   (與 buildMobiusBandGeometry 用同一套扭轉公式:總剖面旋轉角 = 莫比烏斯扭轉 − 花邊扭轉) */
+function mobiusDecoSurface(theta, y, side, halfThick, R){
+  const H = mobiusDecoHalf(theta) - decoTwist(theta);
+  const c = Math.max(0.35, Math.abs(Math.cos(H))), t = Math.max(-2.5, Math.min(2.5, Math.tan(H)));
+  return { r: R + decoWaveOffset(theta) + y*t + side*halfThick/c,
+           z: y + decoWaveWidthOffset(theta) };
 }
 
 function getProfilePoints(shapeKey, halfWidth, halfThick){
@@ -1096,14 +1164,24 @@ function mobiusTwistHalfAngle(theta, twistSharpness){
   const t = (((theta/(Math.PI*2)) % 1) + 1) % 1;
   return ((sig(t)-sig0)/(sig1-sig0)) * Math.PI;
 }
+/* 一般莫比烏斯的扭轉角:扭轉方向取負號(扭向另外一邊);集中係數 55,扭結處面積比原本(90)大一些 */
+function mobiusPlainHalf(theta){
+  return -mobiusTwistHalfAngle(theta, 55);
+}
 
 function buildMobiusBandGeometry(mainRadius, profilePts, withWave, twistSharpness){
   const Useg = 500;      /* 繞圈方向的取樣密度(扭轉範圍變窄後,提高密度以維持平滑不產生稜角) */
   const Nseg = profilePts.length; /* 剖面取樣點數(須為偶數,扭轉半圈後才能精確對應回自身) */
   const positions = new Float32Array(Useg*Nseg*3);
+  const uvs = new Float32Array(Useg*Nseg*2);
+  const vMax = Math.max(...profilePts.map(p=>Math.abs(p.v)));
+  /* 剖面貼圖座標依實際周長分配(圓角矩形的長邊只有兩個點,用索引分配會把貼圖壓成條紋) */
+  const cumLen = [0];
+  for(let k=1;k<=Nseg;k++){ const p0=profilePts[k-1], p1=profilePts[k%Nseg]; cumLen.push(cumLen[k-1] + Math.hypot(p1.v-p0.v, p1.s-p0.s)); }
+  const circ = 2*Math.PI*mainRadius;
   for(let ui=0; ui<Useg; ui++){
     const theta = Math.PI*2*ui/Useg;
-    const half = mobiusTwistHalfAngle(theta, twistSharpness); /* 剖面旋轉角:繞完整圈(theta:0→2π)剖面正好扭轉半圈(half:0→π),
+    const half = withWave ? (mobiusDecoHalf(theta) - decoTwist(theta)) : (twistSharpness ? mobiusTwistHalfAngle(theta, twistSharpness) : mobiusPlainHalf(theta)); /* 剖面旋轉角:繞完整圈(theta:0→2π)剖面正好扭轉半圈(half:0→π),
                                                     但透過緩動函式讓扭轉集中在圈身正面一段範圍 */
     const cu = Math.cos(theta), su = Math.sin(theta);
     const ch = Math.cos(half), sh = Math.sin(half);
@@ -1112,7 +1190,13 @@ function buildMobiusBandGeometry(mainRadius, profilePts, withWave, twistSharpnes
     const waveR = withWave ? decoWaveOffset(theta) : 0;
     const waveW = withWave ? decoWaveWidthOffset(theta) : 0;
     for(let k=0;k<Nseg;k++){
-      const v = profilePts[k].v; /* 剖面局部座標:寬度方向(沿手指軸向) */
+      let v = profilePts[k].v; /* 剖面局部座標:寬度方向(沿手指軸向) */
+      if(withWave && vMax>0){
+        /* 上下緣不規則敲打起伏:越靠近邊緣位移越多,中間不動 */
+        const e = v>0 ? decoEdgeNoise(theta) : decoEdgeNoise(theta + Math.PI*2);
+        v += Math.sign(v)*e*(Math.abs(v)/vMax);
+      }
+      if(withWave){ uvs[(ui*Nseg+k)*2] = ui/Useg*circ/5; uvs[(ui*Nseg+k)*2+1] = cumLen[k]/5; /* 1 個貼圖單位約 5mm,兩方向比例一致 */ }
       const s = profilePts[k].s; /* 剖面局部座標:厚度方向(徑向凸出) */
       /* 剖面局部 (v,s) 依 half 角度旋轉,再依 theta 掃成一圈 */
       const rv = v*ch - s*sh; /* 旋轉後的徑向分量 */
@@ -1125,7 +1209,7 @@ function buildMobiusBandGeometry(mainRadius, profilePts, withWave, twistSharpnes
     }
   }
   const vi = (ui,k)=> ui*Nseg + ((k%Nseg)+Nseg)%Nseg;
-  const indices = [];
+  const indices = [], sandIdx = [];
   const half = Nseg/2;
   for(let ui=0; ui<Useg; ui++){
     const isLast = (ui===Useg-1);
@@ -1137,12 +1221,27 @@ function buildMobiusBandGeometry(mainRadius, profilePts, withWave, twistSharpnes
       else { /* 收尾:最後一圈剖面已扭轉半圈,須對應到第 0 圈「偏移半個剖面周期」的頂點才能正確閉合 */
         c = vi(0,k+1+half); d = vi(0,k+half);
       }
-      indices.push(a,b,c, a,c,d);
+      if(!withWave){ indices.push(a,b,c, a,c,d); continue; }
+      /* 莫比烏斯花邊分區:扭轉折線之後、朝外的那一面為碎星噴砂面,其餘(折線前的正面、內圈、側邊)為亮面 */
+      const sAvg = (profilePts[k%Nseg].s + profilePts[(k+1)%Nseg].s)/2;
+      const th = Math.PI*2*(ui+0.5)/Useg;
+      const ia = a*3, px = positions[ia], py = positions[ia+1], pz = positions[ia+2];
+      const outward = Math.hypot(px,py) > mainRadius + decoWaveOffset(th) + 1e-3;
+      const deg = th*180/Math.PI;
+      const inSand = deg > 0 && deg < MOBIUS_DECO_SAND_END + 14*pz; /* 結束處也做成斜向分界 */
+      ((sAvg < 0 && outward && inSand) ? sandIdx : indices).push(a,b,c, a,c,d);
     }
   }
+  const polishCount = indices.length;
+  for(let i=0;i<sandIdx.length;i++) indices.push(sandIdx[i]);
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions,3));
   geo.setIndex(indices);
+  if(withWave){
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs,2));
+    geo.addGroup(0, polishCount, 0);
+    geo.addGroup(polishCount, indices.length - polishCount, 1);
+  }
   geo.computeVertexNormals();
   return geo;
 }
@@ -1152,7 +1251,7 @@ function buildRingGeometry(shapeKey, halfWidth, halfThick, mainRadius){
     return buildMobiusBandGeometry(mainRadius, mobiusEllipseProfile(halfWidth, halfThick, 28), false);
   }
   if(shapeKey==='mobiusDeco'){
-    return buildMobiusBandGeometry(mainRadius, mobiusEllipseProfile(halfWidth, halfThick, 28), true);
+    return buildMobiusBandGeometry(mainRadius, getDecoProfile(halfWidth, halfThick).map(p=>({v:p.y, s:p.x})), true);
   }
   if(shapeKey==='mobiusFlat'){
     return buildMobiusBandGeometry(mainRadius, mobiusFlatProfile(halfWidth, halfThick), false, 40); /* 扭結放鬆一點,範圍比另外兩款寬一些,矩形剖面在較緩的扭轉下線條更自然 */
@@ -1509,7 +1608,7 @@ function _rebuildRingNow(){
   const geo = buildRingGeometry(viewShape, visualHalfWidth, halfThick, MAIN_RADIUS_MM);
   const mat = materialForFinish(state.finish);
 
-  bandMesh = new THREE.Mesh(geo, mat);
+  bandMesh = new THREE.Mesh(geo, mat); /* 莫比烏斯花邊不加噴砂面,整圈套用使用者選的表面工藝 */
   ringGroup.add(bandMesh);
 
   /* 主寶石:直接使用您提供的平面寶石照片貼在戒指上;花邊形狀因表面有波浪起伏,
@@ -1549,30 +1648,76 @@ function _rebuildRingNow(){
   }
 
   if(state.finish==='stars' || state.finish==='polishStars' || state.finish==='matteStars'){
-    /* 真正的立體閃亮點,而非僅靠貼圖模擬:上百顆極小的高反光球體隨機灑滿戒圈外側表面,
-       轉動時每顆的反光角度都不同,才會有「很多顆星星在戒指上閃閃發亮」的真實感。
-       莫比烏斯造型排除扭結處附近(theta=180度左右60度範圍)不灑星星,讓扭轉線條保持乾淨、
-       不被細碎光點打斷;做法是只從扭結以外剩餘的 300 度弧段(210度~150度,經過0度銜接)隨機取樣。 */
-    const n = 130;
+    /* 碎星:極小的高反光球體(白色小鑽)灑滿戒圈外側表面。
+       莫比烏斯造型:以均勻網格加隨機微調的方式灑滿整個外側正面,只避開
+       (1) 斜向扭轉折線(該處表面傾斜,依實際扭轉角判斷) (2) 厚度側邊 (3) 有選寶石時的寶石位置。
+       用固定亂數種子,每次調整其他選項時碎星分布不會跳動;用 InstancedMesh 一次繪製,數量多也不卡。 */
     const isMobiusShape = (viewShape==='mobius' || viewShape==='mobiusDeco');
-    const sparkGeo = new THREE.SphereGeometry(Math.max(0.045, visualHalfWidth*0.045), 6, 6);
-    for(let i=0;i<n;i++){
-      const isGold = Math.random()<0.3;
-      const sparkMat = new THREE.MeshStandardMaterial({
-        color: isGold ? 0xf0cf8a : 0xffffff,
-        metalness: 1, roughness: 0.05
-      });
-      const spark = new THREE.Mesh(sparkGeo, sparkMat);
-      let theta;
-      if(isMobiusShape){
-        theta = (210 + Math.random()*300) % 360; /* 避開扭結處(180度)前後30度,共60度範圍 */
-      } else {
-        theta = Math.random()*360;
+    const sparkR = Math.max(0.045, visualHalfWidth*0.045);
+    const sparkGeo = new THREE.SphereGeometry(sparkR, 6, 6);
+    const matW = new THREE.MeshStandardMaterial({color:0xffffff, metalness:1, roughness:0.05});
+    const matG = new THREE.MeshStandardMaterial({color:0xf0cf8a, metalness:1, roughness:0.05});
+    let seed = 20261104;
+    const rnd = ()=>{ seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed>>>15, 1 | seed); t = t + Math.imul(t ^ t>>>7, 61 | t) ^ t; return ((t ^ t>>>14) >>> 0) / 4294967296; };
+    const ptsW = [], ptsG = [];
+    const addPt = (x,y,z)=>{ ptsW.push([x,y,z]); }; /* 碎星只用白色小鑽,不用金色 */
+    if(isMobiusShape){
+      const isDeco = (viewShape==='mobiusDeco');
+      const step = isDeco ? 0.12 : 0.18; /* 碎星平均間距(mm):花邊更密集 */
+      const cols = Math.round(2*Math.PI*MAIN_RADIUS_MM/step);
+      const rc = isDeco ? Math.min(halfThick*0.5, visualHalfWidth*0.3) : 0;
+      const hwFlat = isDeco ? visualHalfWidth - rc : visualHalfWidth*0.75; /* 只灑在正面,不灑到厚度側邊 */
+      const rows = Math.max(3, Math.round(2*hwFlat/step));
+      const gemR = Math.max(0.58, visualHalfWidth*0.56);
+      for(let c=0;c<cols;c++) for(let r=0;r<rows;r++){
+        const th = (c + rnd())/cols*Math.PI*2;
+        const v = -hwFlat + (r + rnd())/rows*2*hwFlat; /* 剖面上的寬度位置(扭轉前) */
+        if(!isDeco){
+          /* 一般莫比烏斯:越靠近扭結處(180 度)碎星越稀疏,漸層式淡出;前後約 14 度內完全不灑,約 43 度外恢復滿密度 */
+          const d = Math.abs(Math.atan2(Math.sin(th - Math.PI), Math.cos(th - Math.PI)));
+          const t = Math.min(1, Math.max(0, (d - 0.25)/0.5)), keep = t*t*(3 - 2*t);
+          if(rnd() > keep) continue;
+        }
+        const H = isDeco ? mobiusDecoHalf(th) - decoTwist(th) : mobiusPlainHalf(th);
+        const ch = Math.cos(H), sh = Math.sin(H);
+        if(Math.abs(ch) < 0.17) continue; /* 斜向扭轉折線正中心留一道乾淨的線 */
+        let lim = hwFlat - sparkR;
+        if(isDeco){
+          /* 花邊上下緣有不規則敲打起伏,邊界跟著起伏內縮,避免碎星跑到側邊或懸空 */
+          const e = v > 0 ? decoEdgeNoise(th) : decoEdgeNoise(th + Math.PI*2);
+          lim = hwFlat*(1 + e/visualHalfWidth) - sparkR;
+        }
+        if(Math.abs(v) > lim) continue;
+        /* 帶身兩個平面(剖面厚度方向 s=+、s=-)都檢查:朝外或在扭轉中露出來的那面都灑,朝內的那面不灑;
+           位置照幾何同一套公式旋轉,確保碎星貼在實際表面上 */
+        const sOut = isDeco ? halfThick : halfThick*Math.sqrt(Math.max(0, 1 - (v/visualHalfWidth)*(v/visualHalfWidth)));
+        [1, -1].forEach(f=>{
+          if(f*ch < -0.3) return; /* 這一面朝內(扭轉中兩面都露出時兩面都灑) */
+          const sv = f*(sOut + 0.015);
+          const radial = MAIN_RADIUS_MM + v*sh + sv*ch + (isDeco ? decoWaveOffset(th) : 0);
+          const axial = v*ch - sv*sh + (isDeco ? decoWaveWidthOffset(th) : 0);
+          if(state.gemChosen){
+            const dx = Math.atan2(Math.sin(th - Math.PI), Math.cos(th - Math.PI))*MAIN_RADIUS_MM; /* 此款主石在扭結正中央(180 度) */
+            if(dx*dx + axial*axial < (gemR + 0.12)*(gemR + 0.12)) return; /* 寶石位置不灑 */
+          }
+          addPt(radial*Math.cos(th), radial*Math.sin(th), axial);
+        });
       }
-      const widthOffset = (Math.random()-0.5)*visualHalfWidth*1.7;
-      spark.position.copy(bandPoint(theta, MAIN_RADIUS_MM, halfThick, 0.01, widthOffset));
-      ringGroup.add(spark);
+    } else {
+      for(let i=0;i<130;i++){
+        const theta = rnd()*360;
+        const p = bandPoint(theta, MAIN_RADIUS_MM, halfThick, 0.01, (rnd()-0.5)*visualHalfWidth*1.7);
+        addPt(p.x, p.y, p.z);
+      }
     }
+    const m4 = new THREE.Matrix4();
+    [[ptsW, matW], [ptsG, matG]].forEach(([pts, mt])=>{
+      if(!pts.length) return;
+      const im = new THREE.InstancedMesh(sparkGeo, mt, pts.length);
+      pts.forEach((p,i)=>{ m4.makeTranslation(p[0], p[1], p[2]); im.setMatrixAt(i, m4); });
+      im.instanceMatrix.needsUpdate = true;
+      ringGroup.add(im);
+    });
   }
 
   /* 內外側刻字:分別以各自的文字與顏色渲染於戒圈上;內側刻字置於與寶石相對的 270 度位置,
@@ -1582,28 +1727,38 @@ function _rebuildRingNow(){
     const arc = engraveArcRadians(nominalRadius, cylH);
     const centerRad = (typeof centerAngleRad === 'number') ? centerAngleRad : THREE.MathUtils.degToRad(360);
     const thetaStart = centerRad - arc/2;
-    let decoOffset = 0;
-    if((viewShape==='deco' || viewShape==='mobiusDeco')){
-      /* 花邊表面是連續波浪,刻字弧線橫跨的角度範圍內波浪高低都不同;
-         取弧線範圍內多個取樣點的「最大值」而非單一中心點,確保整條刻字弧線都清楚浮現在波浪表面之上 */
-      let maxOffset = -Infinity;
-      const samples = 12;
-      for(let i=0;i<=samples;i++){
-        /* thetaStart 是 CylinderGeometry 自身的 u 座標,需先換算回與 decoWaveOffset 其他呼叫處
-           一致的實際環周角度 φ(u - 90 度),取樣才會對到波浪表面真正的高低起伏位置 */
-        const u = thetaStart + (arc*i/samples);
-        maxOffset = Math.max(maxOffset, decoWaveOffset(u - Math.PI/2));
-      }
-      decoOffset = maxOffset;
-    }
-    const dir = isInner ? -1 : 1;
-    const radius = nominalRadius + dir*decoOffset;
-    const textGeo = new THREE.CylinderGeometry(radius, radius, cylH, 64, 1, true, thetaStart, arc);
     const textTex = buildEngraveTexture(text, colorHex, !isInner, fontFamily);
     const textMat = new THREE.MeshBasicMaterial({map:textTex, transparent:true, side:THREE.DoubleSide, depthWrite:false});
-    const textMesh = new THREE.Mesh(textGeo, textMat);
-    textMesh.rotation.x = Math.PI/2;
-    if(zOffset) textMesh.position.z = zOffset; /* 厚度側邊刻字:往戒圈其中一側邊緣偏移,呈現在側邊而非正中央 */
+    let textMesh;
+    if(viewShape==='mobiusDeco'){
+      /* 花邊為扭轉波浪表面,刻字改用逐點貼合表面的曲面帶(頂點排列與 UV 和 CylinderGeometry 相同,貼圖方向不變) */
+      const side = isInner ? -1 : 1, segX = 96, segY = 6, halfH = cylH/2;
+      const pos = [], uv = [], idx = [];
+      for(let iy=0; iy<=segY; iy++){
+        const v = iy/segY, yl = halfH - v*cylH + (zOffset||0);
+        for(let ix=0; ix<=segX; ix++){
+          const uf = ix/segX, phi = thetaStart + uf*arc - Math.PI/2;
+          const sf = mobiusDecoSurface(phi, yl, side, halfThick, MAIN_RADIUS_MM);
+          const r = sf.r + side*0.08;
+          pos.push(r*Math.cos(phi), r*Math.sin(phi), sf.z);
+          uv.push(uf, 1-v);
+        }
+      }
+      for(let iy=0; iy<segY; iy++) for(let ix=0; ix<segX; ix++){
+        const a = iy*(segX+1)+ix, b = (iy+1)*(segX+1)+ix;
+        idx.push(a,b,a+1, b,b+1,a+1);
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos,3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv,2));
+      g.setIndex(idx);
+      textMesh = new THREE.Mesh(g, textMat);
+    } else {
+      const textGeo = new THREE.CylinderGeometry(nominalRadius, nominalRadius, cylH, 64, 1, true, thetaStart, arc);
+      textMesh = new THREE.Mesh(textGeo, textMat);
+      textMesh.rotation.x = Math.PI/2;
+      if(zOffset) textMesh.position.z = zOffset; /* 厚度側邊刻字:往戒圈其中一側邊緣偏移,呈現在側邊而非正中央 */
+    }
     ringGroup.add(textMesh);
   }
   if(state.engraveInnerOn && state.engraveInnerText){
